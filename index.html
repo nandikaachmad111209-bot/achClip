@@ -764,7 +764,7 @@
 
 <script>
 /**
- * ClipViral - Single File Engine (Bulletproof CORS Proxy & Video Resolver)
+ * ClipViral - Single File Engine (Dynamic Stream Resolver & Buffering Engine)
  */
 (function() {
   const state = {
@@ -802,7 +802,7 @@
 
   const el = id => document.getElementById(id);
 
-  // Hidden video element for processing
+  // Hidden video element for canvas rendering
   const hiddenVideo = document.createElement('video');
   hiddenVideo.playsInline = true;
   hiddenVideo.muted = true;
@@ -868,13 +868,7 @@
     });
 
     el('tabLocal').addEventListener('click', () => {
-      state.currentSourceType = 'local';
-      el('tabLocal').classList.add('active');
-      el('tabYt').classList.remove('active');
-      el('contentLocal').classList.remove('hidden');
-      el('contentYt').classList.add('hidden');
-      resetSourceLoadingState();
-      validateStep1();
+      switchToLocalTab();
     });
 
     el('btnCheckYt').addEventListener('click', handleYtStreamResolution);
@@ -935,6 +929,16 @@
         el('btnTogglePlay').textContent = '▶';
       }
     });
+  }
+
+  function switchToLocalTab() {
+    state.currentSourceType = 'local';
+    el('tabLocal').classList.add('active');
+    el('tabYt').classList.remove('active');
+    el('contentLocal').classList.remove('hidden');
+    el('contentYt').classList.add('hidden');
+    resetSourceLoadingState();
+    validateStep1();
   }
 
   function bindSlider(id, labelId, suffix, callback) {
@@ -1025,126 +1029,137 @@
     reader.readAsDataURL(file);
   }
 
-  // Robust YouTube URL Parser
   function extractYtId(url) {
     if (!url) return null;
     const cleanUrl = url.trim();
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|shorts\/|live\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+    const regExp = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?|shorts|live)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/;
     const match = cleanUrl.match(regExp);
-    return (match && match[2].length === 11) ? match[2] : null;
+    return match ? match[1] : null;
   }
 
-  // ULTRAROBUS BULLETPROOF YOUTUBE RESOLVER
+  // --- DYNAMIC MULTI-PROXY STREAM RESOLVER & BUFFERING ENGINE ---
   async function handleYtStreamResolution() {
     const rawUrl = el('ytUrl').value.trim();
     const videoId = extractYtId(rawUrl);
 
     if (!videoId) {
-      alert('Link YouTube tidak valid. Contoh: https://www.youtube.com/watch?v=10ZSQPJTIzw atau https://youtu.be/10ZSQPJTIzw');
+      alert('Link YouTube tidak valid.\nContoh: https://www.youtube.com/watch?v=10ZSQPJTIzw atau https://youtu.be/10ZSQPJTIzw');
       return;
     }
 
     state.ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
     state.ytId = videoId;
 
-    el('thumbSourceTitle').textContent = 'Video YouTube (Menskrip Stream...)';
+    el('thumbSourceTitle').textContent = 'Video YouTube (Sedang di-stream...)';
     el('ytThumbImg').src = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
     el('ytThumbImg').classList.remove('hidden');
     el('localThumbCanvas').classList.add('hidden');
     el('videoDetailsText').textContent = 'Menghubungkan ke jaringan video...';
     el('thumbContainer').classList.remove('hidden');
 
-    showModal('Memuat Video YouTube...', 'Mencari stream mp4 publik...');
+    showModal('Memuat Video YouTube...', 'Menghubungkan ke stream MP4 publik...');
 
     try {
-      // Step 1: Ambil Judul Video via Noembed
+      // Ambil Judul Video
       fetch(`https://noembed.com/embed?url=${encodeURIComponent(state.ytUrl)}`)
         .then(r => r.json())
         .then(d => { if (d.title) el('thumbSourceTitle').textContent = d.title; })
         .catch(() => {});
 
-      // Step 2: Dapatkan Direct Stream URL dari Multi-Service Mirrored Proxies
-      let directStreamUrl = null;
+      let streamUrl = null;
 
-      const apiServices = [
-        `https://api.cobalt.tools/api/json`,
-        `https://co.wuk.sh/api/json`,
-        `https://cobalt.api.scout.cheap/api/json`
+      // Service 1: Cobalt APIs
+      const cobaltApis = [
+        'https://api.cobalt.tools/api/json',
+        'https://co.wuk.sh/api/json',
+        'https://cobalt.api.scout.cheap/api/json'
       ];
 
-      for (const service of apiServices) {
+      for (const api of cobaltApis) {
         try {
-          updateProgress(25, 'Mencoba Cobalt API Service...');
-          const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(service)}`, {
+          updateProgress(25, 'Mencoba Cobalt Stream Engine...');
+          const res = await fetch(api, {
             method: 'POST',
             headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
             body: JSON.stringify({ url: state.ytUrl, videoQuality: '720', downloadMode: 'video' })
           });
           if (res.ok) {
             const data = await res.json();
-            if (data.url) { directStreamUrl = data.url; break; }
+            if (data.url) { streamUrl = data.url; break; }
           }
-        } catch(e) { console.warn('Cobalt mirror try failed:', e); }
+        } catch(e) { console.warn('Cobalt failed:', e); }
       }
 
-      // Fallback ke Invidious instances
-      if (!directStreamUrl) {
-        updateProgress(45, 'Mencoba Invidious Stream Engine...');
-        const invidiousNodes = [
-          'https://inv.specified.tech',
-          'https://invidious.nerdvpn.de',
-          'https://invidious.drgns.space',
-          'https://yt.drgnz.club'
+      // Service 2: Piped APIs
+      if (!streamUrl) {
+        updateProgress(50, 'Mencoba Piped Stream Engine...');
+        const pipedApis = [
+          `https://pipedapi.kavin.rocks/streams/${videoId}`,
+          `https://api.piped.video/streams/${videoId}`,
+          `https://pipedapi.mha.fi/streams/${videoId}`
         ];
 
-        for (const node of invidiousNodes) {
+        for (const api of pipedApis) {
           try {
-            const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(node + '/api/v1/videos/' + videoId)}`);
-            if (!res.ok) continue;
-            const data = await res.json();
-            if (data.formatStreams && data.formatStreams.length > 0) {
-              const fmt = data.formatStreams.find(f => f.container === 'mp4' && (f.qualityLabel === '720p' || f.qualityLabel === '360p')) || data.formatStreams[0];
-              if (fmt && fmt.url) { directStreamUrl = fmt.url; break; }
+            let res = await fetch(api);
+            if (!res.ok) {
+              res = await fetch(`https://corsproxy.io/?${encodeURIComponent(api)}`);
             }
-          } catch(e) {}
+            if (res.ok) {
+              const data = await res.json();
+              if (data.videoStreams && data.videoStreams.length > 0) {
+                const stream = data.videoStreams.find(s => s.mimeType.includes('video/mp4') && !s.videoOnly) || data.videoStreams[0];
+                if (stream && stream.url) { streamUrl = stream.url; break; }
+              }
+            }
+          } catch(e) { console.warn('Piped failed:', e); }
         }
       }
 
-      // Fallback ke Piped instances
-      if (!directStreamUrl) {
-        updateProgress(65, 'Mencoba Piped Stream Engine...');
-        const pipedNodes = [
-          'https://pipedapi.kavin.rocks',
-          'https://api.piped.video',
-          'https://pipedapi.mha.fi'
+      // Service 3: Invidious APIs
+      if (!streamUrl) {
+        updateProgress(70, 'Mencoba Invidious Stream Engine...');
+        const invidiousApis = [
+          `https://inv.specified.tech/api/v1/videos/${videoId}`,
+          `https://invidious.nerdvpn.de/api/v1/videos/${videoId}`,
+          `https://yt.drgnz.club/api/v1/videos/${videoId}`
         ];
 
-        for (const node of pipedNodes) {
+        for (const api of invidiousApis) {
           try {
-            const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(node + '/streams/' + videoId)}`);
-            if (!res.ok) continue;
-            const data = await res.json();
-            if (data.videoStreams && data.videoStreams.length > 0) {
-              const stream = data.videoStreams.find(s => s.mimeType.includes('video/mp4') && !s.videoOnly) || data.videoStreams[0];
-              if (stream && stream.url) { directStreamUrl = stream.url; break; }
+            let res = await fetch(api);
+            if (!res.ok) {
+              res = await fetch(`https://corsproxy.io/?${encodeURIComponent(api)}`);
             }
-          } catch(e) {}
+            if (res.ok) {
+              const data = await res.json();
+              if (data.formatStreams && data.formatStreams.length > 0) {
+                const fmt = data.formatStreams.find(f => f.container === 'mp4' && (f.qualityLabel === '720p' || f.qualityLabel === '360p')) || data.formatStreams[0];
+                if (fmt && fmt.url) { streamUrl = fmt.url; break; }
+              }
+            }
+          } catch(e) { console.warn('Invidious failed:', e); }
         }
       }
 
-      if (!directStreamUrl) {
-        throw new Error('Video YouTube ini tidak memberikan stream publik (kemungkinan dibatasi usia, privat, atau terkena hak cipta).');
+      if (!streamUrl) {
+        throw new Error('Streaming langsung diblokir oleh YouTube untuk video ini.');
       }
 
-      // Step 3: Unduh Stream sebagai Blob lokal agar Canvas Render 100% Bebas CORS & Lancar
-      updateProgress(80, 'Buffering video ke memori browser...');
-      const targetUrl = directStreamUrl.startsWith('blob:') ? directStreamUrl : `https://corsproxy.io/?${encodeURIComponent(directStreamUrl)}`;
-      
-      const videoRes = await fetch(targetUrl);
-      if (!videoRes.ok) throw new Error('Gagal mengunduh berkas video stream.');
+      // Unduh Stream menjadi local Blob agar Canvas 100% Bebas Error CORS
+      updateProgress(85, 'Buffering video ke memori browser...');
+      let videoResponse;
+      try {
+        videoResponse = await fetch(streamUrl);
+        if (!videoResponse.ok) throw new Error('Direct fetch error');
+      } catch(e) {
+        videoResponse = await fetch(`https://corsproxy.io/?${encodeURIComponent(streamUrl)}`);
+      }
 
-      const reader = videoRes.body.getReader();
-      const contentLength = +videoRes.headers.get('Content-Length') || 30 * 1024 * 1024;
+      if (!videoResponse.ok) throw new Error('Gagal mendownload data stream video.');
+
+      const reader = videoResponse.body.getReader();
+      const contentLength = +videoResponse.headers.get('Content-Length') || 30 * 1024 * 1024;
       let receivedLength = 0;
       let chunks = [];
 
@@ -1153,7 +1168,7 @@
         if (done) break;
         chunks.push(value);
         receivedLength += value.length;
-        const pct = Math.min(99, 80 + Math.round((receivedLength / contentLength) * 19));
+        const pct = Math.min(99, 85 + Math.round((receivedLength / contentLength) * 14));
         updateProgress(pct, `Mengunduh video: ${(receivedLength / (1024 * 1024)).toFixed(1)} MB...`);
       }
 
@@ -1172,7 +1187,8 @@
 
     } catch (err) {
       hideModal();
-      alert(`Gagal memuat link YouTube: ${err.message}\n\nSolusi: Silakan unduh video tersebut dan gunakan pilihan tab "Video Lokal".`);
+      alert(`⚠️ Pembatasan YouTube Terdeteksi!\n\nYouTube memblokir akses stream langsung untuk video ini.\n\nSolusi Mudah:\n1. Buka situs pengunduh (seperti y2mate.is / cobalt.tools)\n2. Unduh video MP4-nya\n3. Upload file tersebut di tab "Video Lokal"`);
+      switchToLocalTab();
     }
   }
 
