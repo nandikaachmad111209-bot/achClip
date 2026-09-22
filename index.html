@@ -1192,75 +1192,17 @@
     }
   }
 
-  const COMPRESS_LONG_EDGE_THRESHOLD = 1280; // > ini dianggap di atas 720p
-  const COMPRESS_SIZE_THRESHOLD = 150 * 1024 * 1024; // 150MB
-
-  async function handleVideoUpload(e) {
+  function handleVideoUpload(e) {
     const file = e.target.files[0];
     if (!file) return;
 
-    el('btnGoToStep2').disabled = true;
-
-    // Cek resolusi & durasi asli dulu sebelum diproses lebih lanjut
-    let origW = 0, origH = 0, origDuration = 0;
-    try {
-      const probe = document.createElement('video');
-      probe.muted = true;
-      probe.src = URL.createObjectURL(file);
-      await new Promise((res, rej) => {
-        probe.onloadedmetadata = res;
-        probe.onerror = () => rej(new Error('Gagal membaca metadata video.'));
-      });
-      origW = probe.videoWidth;
-      origH = probe.videoHeight;
-      origDuration = probe.duration;
-      URL.revokeObjectURL(probe.src);
-    } catch (err) {
-      alert(`Gagal membaca file video: ${err.message}`);
-      el('btnGoToStep2').disabled = false;
-      return;
-    }
-
-    const longEdge = Math.max(origW, origH);
-    let finalFile = file;
-    let wasCompressed = false;
-
-    try {
-      if (longEdge > COMPRESS_LONG_EDGE_THRESHOLD) {
-        // Resolusi di atas 720p -> turunkan resolusi
-        showModal('Mengompres Video...', 'Resolusi di atas 720p terdeteksi, sedang dikompres...');
-        finalFile = await compressVideoResolution(file, origW, origH, origDuration, COMPRESS_LONG_EDGE_THRESHOLD, 4000000, (pct) => {
-          updateProgress(pct, `Mengompres video ke 720p... ${Math.round(pct)}%`);
-        });
-        wasCompressed = true;
-        hideModal();
-      } else if (file.size > COMPRESS_SIZE_THRESHOLD) {
-        // Sudah ≤720p tapi file masih besar -> kompres bitrate saja, resolusi tetap
-        showModal('Mengompres Video...', 'Ukuran file besar, sedang dikompres ringan agar upload lebih cepat...');
-        finalFile = await compressVideoResolution(file, origW, origH, origDuration, longEdge, 2500000, (pct) => {
-          updateProgress(pct, `Mengompres video... ${Math.round(pct)}%`);
-        });
-        wasCompressed = true;
-        hideModal();
-      }
-      // else: sudah ≤720p dan ukurannya wajar -> pakai file asli, skip kompresi
-    } catch (err) {
-      hideModal();
-      alert(`⚠️ Kompresi otomatis gagal (${err.message}). Video asli tetap dipakai, tapi upload mungkin lebih lambat.`);
-      finalFile = file;
-      wasCompressed = false;
-    }
-
-    state.videoBlob = finalFile;
-    state.videoSrcUrl = URL.createObjectURL(finalFile);
+    state.videoBlob = file;
+    state.videoSrcUrl = URL.createObjectURL(file);
     hiddenVideo.src = state.videoSrcUrl;
 
     el('thumbSourceTitle').textContent = 'Video Lokal';
-    const sizeMB = (finalFile.size / (1024 * 1024)).toFixed(1);
-    el('videoFileInfo').textContent = wasCompressed
-      ? `🎥 ${file.name} (${sizeMB} MB, sudah dikompres)`
-      : `🎥 ${file.name} (${sizeMB} MB)`;
-
+    el('videoFileInfo').textContent = `🎥 ${file.name} (${(file.size / (1024*1024)).toFixed(1)} MB)`;
+    
     el('ytThumbImg').classList.add('hidden');
     el('localThumbCanvas').classList.remove('hidden');
     el('thumbContainer').classList.remove('hidden');
@@ -1282,85 +1224,6 @@
       checkDurationValidation();
       validateStep1();
     };
-  }
-
-  // Kompres video: downscale resolusi (opsional) + re-encode via canvas+MediaRecorder.
-  // Proses berjalan real-time (durasi kompresi ≈ durasi video), karena tidak pakai ffmpeg.
-  function compressVideoResolution(file, origW, origH, duration, targetLongEdge, bitrate, onProgress) {
-    return new Promise((resolve, reject) => {
-      let targetW, targetH;
-      if (origW >= origH) {
-        targetW = Math.min(origW, targetLongEdge);
-        targetH = Math.round(origH * (targetW / origW));
-      } else {
-        targetH = Math.min(origH, targetLongEdge);
-        targetW = Math.round(origW * (targetH / origH));
-      }
-      targetW = targetW - (targetW % 2);
-      targetH = targetH - (targetH % 2);
-
-      const canvas = document.createElement('canvas');
-      canvas.width = targetW;
-      canvas.height = targetH;
-      const ctx = canvas.getContext('2d');
-
-      const video = document.createElement('video');
-      video.src = URL.createObjectURL(file);
-      video.muted = false;
-      video.playsInline = true;
-
-      const cleanup = () => URL.revokeObjectURL(video.src);
-
-      video.onerror = () => { cleanup(); reject(new Error('Gagal memuat video untuk kompresi.')); };
-
-      video.onloadedmetadata = async () => {
-        try {
-          const AudioCtx = window.AudioContext || window.webkitAudioContext;
-          const audioCtx = new AudioCtx();
-          if (audioCtx.state === 'suspended') await audioCtx.resume();
-
-          const sourceNode = audioCtx.createMediaElementSource(video);
-          const destNode = audioCtx.createMediaStreamDestination();
-          sourceNode.connect(destNode);
-
-          const canvasStream = canvas.captureStream(30);
-          const combinedStream = new MediaStream([
-            ...canvasStream.getVideoTracks(),
-            ...destNode.stream.getAudioTracks()
-          ]);
-
-          const mimeType = getSupportedMimeType();
-          const recorder = new MediaRecorder(combinedStream, { mimeType, videoBitsPerSecond: bitrate });
-          const chunks = [];
-          recorder.ondataavailable = (ev) => { if (ev.data.size > 0) chunks.push(ev.data); };
-          recorder.onstop = () => {
-            audioCtx.close();
-            cleanup();
-            resolve(new Blob(chunks, { type: mimeType || 'video/mp4' }));
-          };
-          recorder.onerror = (ev) => { audioCtx.close(); cleanup(); reject(new Error('MediaRecorder error saat kompresi.')); };
-
-          video.onended = () => { if (recorder.state !== 'inactive') recorder.stop(); };
-
-          await video.play();
-          recorder.start();
-
-          function drawFrame() {
-            if (video.ended || video.paused) {
-              if (recorder.state !== 'inactive') recorder.stop();
-              return;
-            }
-            ctx.drawImage(video, 0, 0, targetW, targetH);
-            if (onProgress && duration > 0) onProgress(Math.min(100, (video.currentTime / duration) * 100));
-            requestAnimationFrame(drawFrame);
-          }
-          drawFrame();
-        } catch (err) {
-          cleanup();
-          reject(err);
-        }
-      };
-    });
   }
 
   function checkDurationValidation() {
