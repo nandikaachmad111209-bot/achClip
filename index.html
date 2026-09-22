@@ -764,7 +764,7 @@
 
 <script>
 /**
- * ClipViral - Single File Engine (CORS Bypasser & Multi-Proxy Video Stream Engine)
+ * ClipViral - Single File Engine (Bulletproof CORS Proxy & Video Resolver)
  */
 (function() {
   const state = {
@@ -802,11 +802,10 @@
 
   const el = id => document.getElementById(id);
 
-  // Hidden video element for rendering
+  // Hidden video element for processing
   const hiddenVideo = document.createElement('video');
   hiddenVideo.playsInline = true;
   hiddenVideo.muted = true;
-  hiddenVideo.crossOrigin = "anonymous";
 
   const bgOffCanvas = document.createElement('canvas');
 
@@ -869,7 +868,13 @@
     });
 
     el('tabLocal').addEventListener('click', () => {
-      switchToLocalTab();
+      state.currentSourceType = 'local';
+      el('tabLocal').classList.add('active');
+      el('tabYt').classList.remove('active');
+      el('contentLocal').classList.remove('hidden');
+      el('contentYt').classList.add('hidden');
+      resetSourceLoadingState();
+      validateStep1();
     });
 
     el('btnCheckYt').addEventListener('click', handleYtStreamResolution);
@@ -930,16 +935,6 @@
         el('btnTogglePlay').textContent = '▶';
       }
     });
-  }
-
-  function switchToLocalTab() {
-    state.currentSourceType = 'local';
-    el('tabLocal').classList.add('active');
-    el('tabYt').classList.remove('active');
-    el('contentLocal').classList.remove('hidden');
-    el('contentYt').classList.add('hidden');
-    resetSourceLoadingState();
-    validateStep1();
   }
 
   function bindSlider(id, labelId, suffix, callback) {
@@ -1030,100 +1025,155 @@
     reader.readAsDataURL(file);
   }
 
+  // Robust YouTube URL Parser
   function extractYtId(url) {
+    if (!url) return null;
+    const cleanUrl = url.trim();
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|shorts\/|live\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-    const match = url.match(regExp);
+    const match = cleanUrl.match(regExp);
     return (match && match[2].length === 11) ? match[2] : null;
   }
 
-  // --- CORS-PROOF YOUTUBE STREAM EXTRACTOR ---
+  // ULTRAROBUS BULLETPROOF YOUTUBE RESOLVER
   async function handleYtStreamResolution() {
-    const url = el('ytUrl').value.trim();
-    const id = extractYtId(url);
-    if (!id) {
-      alert('Link YouTube tidak valid. Contoh: https://www.youtube.com/watch?v=...');
+    const rawUrl = el('ytUrl').value.trim();
+    const videoId = extractYtId(rawUrl);
+
+    if (!videoId) {
+      alert('Link YouTube tidak valid. Contoh: https://www.youtube.com/watch?v=10ZSQPJTIzw atau https://youtu.be/10ZSQPJTIzw');
       return;
     }
-    state.ytUrl = url;
-    state.ytId = id;
+
+    state.ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
+    state.ytId = videoId;
 
     el('thumbSourceTitle').textContent = 'Video YouTube (Menskrip Stream...)';
-    el('ytThumbImg').src = `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
+    el('ytThumbImg').src = `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`;
     el('ytThumbImg').classList.remove('hidden');
     el('localThumbCanvas').classList.add('hidden');
     el('videoDetailsText').textContent = 'Menghubungkan ke jaringan video...';
     el('thumbContainer').classList.remove('hidden');
 
-    showModal('Memuat Video YouTube...', 'Menghubungkan stream video publik...');
+    showModal('Memuat Video YouTube...', 'Mencari stream mp4 publik...');
 
-    // Multi-Server Proxy APIs
-    const pipedInstances = [
-      `https://pipedapi.kavin.rocks/streams/${id}`,
-      `https://api.piped.video/streams/${id}`,
-      `https://pipedapi.mha.fi/streams/${id}`,
-      `https://pipedapi.sil3nt.org/streams/${id}`
-    ];
+    try {
+      // Step 1: Ambil Judul Video via Noembed
+      fetch(`https://noembed.com/embed?url=${encodeURIComponent(state.ytUrl)}`)
+        .then(r => r.json())
+        .then(d => { if (d.title) el('thumbSourceTitle').textContent = d.title; })
+        .catch(() => {});
 
-    let streamUrl = null;
+      // Step 2: Dapatkan Direct Stream URL dari Multi-Service Mirrored Proxies
+      let directStreamUrl = null;
 
-    // Direct fetch with automatic CORS proxy wrapper fallback
-    for (let i = 0; i < pipedInstances.length; i++) {
-      try {
-        updateProgress(20 + i * 15, `Menghubungkan ke server stream #${i + 1}...`);
-        
-        let res;
+      const apiServices = [
+        `https://api.cobalt.tools/api/json`,
+        `https://co.wuk.sh/api/json`,
+        `https://cobalt.api.scout.cheap/api/json`
+      ];
+
+      for (const service of apiServices) {
         try {
-          res = await fetch(pipedInstances[i]);
-        } catch(e) {
-          // Fallback bypass via CORS proxy
-          res = await fetch(`https://corsproxy.io/?${encodeURIComponent(pipedInstances[i])}`);
-        }
-
-        if (!res.ok) continue;
-        const data = await res.json();
-
-        if (data.videoStreams && Array.isArray(data.videoStreams)) {
-          const combinedMp4 = data.videoStreams.find(s => s.mimeType.includes('video/mp4') && s.videoOnly === false) ||
-                              data.videoStreams.find(s => s.mimeType.includes('video/mp4'));
-          if (combinedMp4 && combinedMp4.url) {
-            streamUrl = combinedMp4.url;
-            break;
+          updateProgress(25, 'Mencoba Cobalt API Service...');
+          const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(service)}`, {
+            method: 'POST',
+            headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: state.ytUrl, videoQuality: '720', downloadMode: 'video' })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (data.url) { directStreamUrl = data.url; break; }
           }
-        }
-      } catch (e) {
-        console.warn(`Stream instance ${i+1} error:`, e);
+        } catch(e) { console.warn('Cobalt mirror try failed:', e); }
       }
+
+      // Fallback ke Invidious instances
+      if (!directStreamUrl) {
+        updateProgress(45, 'Mencoba Invidious Stream Engine...');
+        const invidiousNodes = [
+          'https://inv.specified.tech',
+          'https://invidious.nerdvpn.de',
+          'https://invidious.drgns.space',
+          'https://yt.drgnz.club'
+        ];
+
+        for (const node of invidiousNodes) {
+          try {
+            const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(node + '/api/v1/videos/' + videoId)}`);
+            if (!res.ok) continue;
+            const data = await res.json();
+            if (data.formatStreams && data.formatStreams.length > 0) {
+              const fmt = data.formatStreams.find(f => f.container === 'mp4' && (f.qualityLabel === '720p' || f.qualityLabel === '360p')) || data.formatStreams[0];
+              if (fmt && fmt.url) { directStreamUrl = fmt.url; break; }
+            }
+          } catch(e) {}
+        }
+      }
+
+      // Fallback ke Piped instances
+      if (!directStreamUrl) {
+        updateProgress(65, 'Mencoba Piped Stream Engine...');
+        const pipedNodes = [
+          'https://pipedapi.kavin.rocks',
+          'https://api.piped.video',
+          'https://pipedapi.mha.fi'
+        ];
+
+        for (const node of pipedNodes) {
+          try {
+            const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(node + '/streams/' + videoId)}`);
+            if (!res.ok) continue;
+            const data = await res.json();
+            if (data.videoStreams && data.videoStreams.length > 0) {
+              const stream = data.videoStreams.find(s => s.mimeType.includes('video/mp4') && !s.videoOnly) || data.videoStreams[0];
+              if (stream && stream.url) { directStreamUrl = stream.url; break; }
+            }
+          } catch(e) {}
+        }
+      }
+
+      if (!directStreamUrl) {
+        throw new Error('Video YouTube ini tidak memberikan stream publik (kemungkinan dibatasi usia, privat, atau terkena hak cipta).');
+      }
+
+      // Step 3: Unduh Stream sebagai Blob lokal agar Canvas Render 100% Bebas CORS & Lancar
+      updateProgress(80, 'Buffering video ke memori browser...');
+      const targetUrl = directStreamUrl.startsWith('blob:') ? directStreamUrl : `https://corsproxy.io/?${encodeURIComponent(directStreamUrl)}`;
+      
+      const videoRes = await fetch(targetUrl);
+      if (!videoRes.ok) throw new Error('Gagal mengunduh berkas video stream.');
+
+      const reader = videoRes.body.getReader();
+      const contentLength = +videoRes.headers.get('Content-Length') || 30 * 1024 * 1024;
+      let receivedLength = 0;
+      let chunks = [];
+
+      while(true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        receivedLength += value.length;
+        const pct = Math.min(99, 80 + Math.round((receivedLength / contentLength) * 19));
+        updateProgress(pct, `Mengunduh video: ${(receivedLength / (1024 * 1024)).toFixed(1)} MB...`);
+      }
+
+      state.videoBlob = new Blob(chunks, { type: 'video/mp4' });
+      state.videoSrcUrl = URL.createObjectURL(state.videoBlob);
+
+      hiddenVideo.src = state.videoSrcUrl;
+
+      hiddenVideo.onloadedmetadata = () => {
+        state.videoDuration = hiddenVideo.duration;
+        el('videoDetailsText').textContent = `Durasi YouTube: ${formatTime(state.videoDuration)}`;
+        hideModal();
+        checkDurationValidation();
+        validateStep1();
+      };
+
+    } catch (err) {
+      hideModal();
+      alert(`Gagal memuat link YouTube: ${err.message}\n\nSolusi: Silakan unduh video tersebut dan gunakan pilihan tab "Video Lokal".`);
     }
-
-    if (!streamUrl) {
-      hideModal();
-      alert('Gagal mengambil stream video YouTube. Silakan periksa koneksi internet Anda atau gunakan tab "Video Lokal".');
-      return;
-    }
-
-    updateProgress(90, 'Memuat pemutar video...');
-
-    // Wrap Googlevideo stream URL with CORS proxy to avoid browser canvas tainting
-    const finalProxiedStreamUrl = streamUrl.includes('googlevideo.com') ? 
-      `https://corsproxy.io/?${encodeURIComponent(streamUrl)}` : streamUrl;
-
-    state.videoSrcUrl = finalProxiedStreamUrl;
-    hiddenVideo.crossOrigin = "anonymous";
-    hiddenVideo.src = finalProxiedStreamUrl;
-
-    hiddenVideo.onloadedmetadata = () => {
-      state.videoDuration = hiddenVideo.duration;
-      el('videoDetailsText').textContent = `Durasi YouTube: ${formatTime(state.videoDuration)}`;
-      hideModal();
-      checkDurationValidation();
-      validateStep1();
-    };
-
-    hiddenVideo.onerror = (err) => {
-      console.error('Video load error:', err);
-      hideModal();
-      alert('Browser menolak memutar stream ini. Silakan coba link YouTube lain atau gunakan tab Video Lokal.');
-    };
   }
 
   function handleVideoUpload(e) {
@@ -1395,16 +1445,9 @@
     } catch(e){}
 
     try {
-      let fileDataPayload = null;
-
-      if (state.currentSourceType === 'yt' && state.ytUrl) {
-        updateProgress(15, 'Mengirim link YouTube & brief ke Gemini AI...');
-        fileDataPayload = { text: `YouTube Video Link: ${state.ytUrl}` };
-      } else {
-        updateProgress(15, 'Mengunggah file video ke Gemini Files API...');
-        const uploadedFile = await uploadVideoToGeminiFilesApi(state.videoBlob, state.apiKey, p => updateProgress(15 + p * 0.2, p));
-        fileDataPayload = { fileData: { fileUri: uploadedFile.uri, mimeType: uploadedFile.mimeType } };
-      }
+      updateProgress(15, 'Mengunggah video ke Gemini Files API...');
+      const uploadedFile = await uploadVideoToGeminiFilesApi(state.videoBlob, state.apiKey, p => updateProgress(15 + p * 0.2, p));
+      const fileDataPayload = { fileData: { fileUri: uploadedFile.uri, mimeType: uploadedFile.mimeType } };
 
       const prompt = `Anda adalah editor video viral profesional TikTok/Reels/Shorts.
 Tugas Anda: Analisis video ini bersama file brief campaign yang dilampirkan.
@@ -1449,8 +1492,7 @@ Hasilkan JSON persis sesuai struktur berikut:
       if (state.briefBase64) {
         parts.push({ inlineData: { mimeType: state.briefFile.type || 'application/pdf', data: state.briefBase64 } });
       }
-      if (fileDataPayload.fileData) parts.push(fileDataPayload.fileData);
-      else if (fileDataPayload.text) parts.push({ text: fileDataPayload.text });
+      parts.push(fileDataPayload.fileData);
       parts.push({ text: prompt });
 
       const requestBody = {
@@ -1614,7 +1656,6 @@ Hasilkan JSON persis sesuai struktur berikut:
       renderVideo.src = state.videoSrcUrl;
       renderVideo.muted = false;
       renderVideo.playsInline = true;
-      renderVideo.crossOrigin = "anonymous";
 
       await new Promise(r => { renderVideo.onloadedmetadata = r; });
 
